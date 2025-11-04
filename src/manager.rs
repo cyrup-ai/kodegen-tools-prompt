@@ -5,12 +5,25 @@ use anyhow::{Context, Result};
 use kodegen_mcp_tool::error::McpError;
 use log::{info, warn};
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::fs;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::RwLock;
+
+/// Cached template with file modification time for validation
+struct CachedTemplate {
+    template: PromptTemplate,
+    file_mtime: SystemTime,
+}
 
 #[derive(Clone)]
 pub struct PromptManager {
     prompts_dir: PathBuf,
+    cache: Arc<RwLock<HashMap<String, CachedTemplate>>>,
 }
 
 impl Default for PromptManager {
@@ -25,7 +38,10 @@ impl PromptManager {
     pub fn new() -> Self {
         let prompts_dir =
             get_prompts_directory().unwrap_or_else(|_| PathBuf::from(".kodegen/prompts"));
-        Self { prompts_dir }
+        Self {
+            prompts_dir,
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     /// Initialize the prompt manager (async initialization)
@@ -90,33 +106,87 @@ impl PromptManager {
         validate_prompt_name(name)?;
 
         let path = self.prompts_dir.join(format!("{name}.j2.md"));
+
+        // Step 1: Check cache with read lock (allows concurrent reads)
+        {
+            let cache = self.cache.read().await;
+            if let Some(cached) = cache.get(name) {
+                // Verify file hasn't been modified since caching
+                if let Ok(current_meta) = fs::metadata(&path).await
+                    && let Ok(current_mtime) = current_meta.modified()
+                        && current_mtime == cached.file_mtime {
+                            // Cache hit: file unchanged, return cached template
+                            return Ok(cached.template.clone());
+                        }
+                // Cache stale: file modified, fall through to reload
+            }
+            // Cache miss: template not cached, fall through to load
+        } // Read lock dropped here
+
+        // Step 2: Cache miss or stale - load from disk
         let content = fs::read_to_string(&path)
             .await
             .with_context(|| format!("Failed to read prompt: {name}"))?;
 
-        parse_template(name, &content)
+        let metadata = fs::metadata(&path).await?;
+        let file_mtime = metadata.modified()?;
+        let template = parse_template(name, &content)?;
+
+        // Step 3: Update cache with write lock
+        {
+            let mut cache = self.cache.write().await;
+            cache.insert(
+                name.to_string(),
+                CachedTemplate {
+                    template: template.clone(),
+                    file_mtime,
+                },
+            );
+        } // Write lock dropped here
+
+        Ok(template)
     }
 
     /// Save a new prompt (async)
     pub async fn add_prompt(&self, name: &str, content: &str) -> Result<()> {
-        // Validate name
+        // Validate name (prevent path traversal)
         validate_prompt_name(name)?;
-
-        // Validate content first
+        
+        // Validate content syntax
         super::validation::validate_prompt_file(content)?;
 
         let path = self.prompts_dir.join(format!("{name}.j2.md"));
 
-        // Check if exists (async)
-        if fs::try_exists(&path).await.unwrap_or(false) {
-            anyhow::bail!("Prompt '{name}' already exists. Use edit_prompt to modify.");
-        }
-
-        fs::write(&path, content)
+        // Atomic create-new operation - fails if file already exists
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)  // Atomic: fails if file exists
+            .open(&path)
             .await
-            .with_context(|| format!("Failed to write prompt: {name}"))?;
-
-        Ok(())
+        {
+            Ok(mut file) => {
+                // File created successfully, write content
+                file.write_all(content.as_bytes())
+                    .await
+                    .with_context(|| format!("Failed to write prompt: {name}"))?;
+                
+                file.flush()
+                    .await
+                    .with_context(|| format!("Failed to flush prompt: {name}"))?;
+                
+                // Invalidate cache after successful write
+                self.invalidate_cache(name).await;
+                Ok(())
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // File already exists - provide friendly error message
+                anyhow::bail!("Prompt '{name}' already exists. Use edit_prompt to modify.")
+            }
+            Err(e) => {
+                // Other IO error (permissions, disk full, etc.)
+                Err(e).with_context(|| format!("Failed to create prompt: {name}"))?
+            }
+        }
     }
 
     /// Update an existing prompt (async)
@@ -138,6 +208,7 @@ impl PromptManager {
             .await
             .with_context(|| format!("Failed to update prompt: {name}"))?;
 
+        self.invalidate_cache(name).await;
         Ok(())
     }
 
@@ -157,6 +228,7 @@ impl PromptManager {
             .await
             .with_context(|| format!("Failed to delete prompt: {name}"))?;
 
+        self.invalidate_cache(name).await;
         Ok(())
     }
 
@@ -168,6 +240,12 @@ impl PromptManager {
     ) -> Result<String> {
         let template = self.load_prompt(name).await?;
         render_template(&template, parameters.as_ref())
+    }
+
+    /// Invalidate cached entry for a specific prompt
+    async fn invalidate_cache(&self, name: &str) {
+        let mut cache = self.cache.write().await;
+        cache.remove(name);
     }
 }
 
