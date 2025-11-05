@@ -9,16 +9,14 @@ use rmcp::handler::server::router::{prompt::PromptRouter, tool::ToolRouter};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    run_http_server("prompt", |_config, _tracker| {
+    run_http_server("prompt", |_config, _tracker| Box::pin(async move {
         let mut tool_router = ToolRouter::new();
         let mut prompt_router = PromptRouter::new();
         let managers = Managers::new();
 
-        // Initialize PromptManager (async init in sync context)
+        // Initialize PromptManager (clean async initialization)
         let manager = kodegen_tools_prompt::PromptManager::new();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(manager.init())
-        })?;
+        manager.init().await?;
 
         // Register all 4 prompt management tools with shared manager
         use kodegen_tools_prompt::*;
@@ -45,6 +43,6 @@ async fn main() -> Result<()> {
         );
 
         Ok(RouterSet::new(tool_router, prompt_router, managers))
-    })
+    }))
     .await
 }

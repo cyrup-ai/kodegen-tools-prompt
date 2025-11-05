@@ -1,5 +1,7 @@
 use anyhow::Result;
 use minijinja::Environment;
+use lazy_static::lazy_static;
+use regex::Regex;
 
 /// Maximum template size in bytes (1MB)
 const MAX_TEMPLATE_SIZE: usize = 1_000_000;
@@ -38,19 +40,45 @@ pub fn validate_prompt_file(content: &str) -> Result<()> {
     Ok(())
 }
 
+lazy_static! {
+    /// Matches {% include with any whitespace control and spacing
+    /// Pattern: {%[-+]?\s*include\s+
+    /// - {%      = literal opening tag
+    /// - [-+]?   = optional whitespace control (-, +)
+    /// - \s*     = zero or more whitespace (spaces, tabs, newlines)
+    /// - include = directive name
+    /// - \s+     = required whitespace after directive
+    static ref INCLUDE_PATTERN: Regex =
+        Regex::new(r"\{%[-+]?\s*include\s+")
+            .expect("Failed to compile include pattern");
+    
+    static ref EXTENDS_PATTERN: Regex =
+        Regex::new(r"\{%[-+]?\s*extends\s+")
+            .expect("Failed to compile extends pattern");
+    
+    static ref IMPORT_PATTERN: Regex =
+        Regex::new(r"\{%[-+]?\s*import\s+")
+            .expect("Failed to compile import pattern");
+    
+    /// Matches {% from for from-import statements
+    static ref FROM_IMPORT_PATTERN: Regex =
+        Regex::new(r"\{%[-+]?\s*from\s+")
+            .expect("Failed to compile from import pattern");
+}
+
 /// Check for dangerous template operations
-/// Based on security policy (research decision)
+/// Based on security policy and runtime constraints (no loader configured)
 fn validate_no_dangerous_operations(content: &str) -> Result<()> {
     // Block include directives (file access)
-    if content.contains("{% include") || content.contains("{%- include") {
+    if INCLUDE_PATTERN.is_match(content) {
         anyhow::bail!(
             "Template contains forbidden 'include' directive. \
              File inclusion is not allowed for security reasons."
         );
     }
 
-    // Block extends directives (not needed, potential attack vector)
-    if content.contains("{% extends") || content.contains("{%- extends") {
+    // Block extends directives (template inheritance)
+    if EXTENDS_PATTERN.is_match(content) {
         anyhow::bail!(
             "Template contains forbidden 'extends' directive. \
              Template inheritance is not supported."
@@ -58,7 +86,7 @@ fn validate_no_dangerous_operations(content: &str) -> Result<()> {
     }
 
     // Block import directives (module loading)
-    if content.contains("{% import") || content.contains("{%- import") {
+    if IMPORT_PATTERN.is_match(content) || FROM_IMPORT_PATTERN.is_match(content) {
         anyhow::bail!(
             "Template contains forbidden 'import' directive. \
              Module imports are not allowed."

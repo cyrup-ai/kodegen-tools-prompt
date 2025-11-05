@@ -3,7 +3,7 @@ use super::metadata::PromptTemplate;
 use super::template::{parse_template, render_template};
 use anyhow::{Context, Result};
 use kodegen_mcp_tool::error::McpError;
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -82,17 +82,41 @@ impl PromptManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            // Check if it's a .j2.md or .md file and try to load it
-            if let Some(ext) = path.extension().and_then(|s| s.to_str())
-                && ext == "md"
-                && let Some(filename) = path.file_stem().and_then(|s| s.to_str())
-            {
-                // Try to load, but don't fail entire list if one is invalid
-                match self.load_prompt(filename).await {
-                    Ok(template) => prompts.push(template),
-                    Err(e) => {
-                        warn!("Failed to load prompt '{filename}': {e}");
-                    }
+            // CHANGE 1: Check file type first (reject symlinks and directories)
+            let file_type = match entry.file_type().await {
+                Ok(ft) => ft,
+                Err(e) => {
+                    warn!("Failed to get file type for {}: {e}", path.display());
+                    continue;
+                }
+            };
+
+            // CHANGE 2: Skip non-regular files (directories, symlinks, etc.)
+            if !file_type.is_file() {
+                debug!("Skipping non-file entry: {}", path.display());
+                continue;
+            }
+
+            // CHANGE 3: Check for .j2.md extension (not just .md)
+            let filename_str = match path.file_name().and_then(|s| s.to_str()) {
+                Some(name) if name.ends_with(".j2.md") => name,
+                _ => continue, // Skip files that don't match pattern
+            };
+
+            // CHANGE 4: Extract stem by removing ".j2.md" suffix (6 chars)
+            let stem = &filename_str[..filename_str.len() - 6];
+
+            // Validate prompt name before attempting load (reuses existing validation)
+            if !is_valid_prompt_name(stem) {
+                warn!("Invalid prompt filename (skipping): {stem}");
+                continue;
+            }
+
+            // Load prompt (now guaranteed to be safe, regular file)
+            match self.load_prompt(stem).await {
+                Ok(template) => prompts.push(template),
+                Err(e) => {
+                    warn!("Failed to load prompt '{stem}': {e}");
                 }
             }
         }
@@ -174,6 +198,11 @@ impl PromptManager {
                     .await
                     .with_context(|| format!("Failed to flush prompt: {name}"))?;
                 
+                // Sync to disk for durability (survive power loss)
+                file.sync_all()
+                    .await
+                    .with_context(|| format!("Failed to sync prompt to disk: {name}"))?;
+                
                 // Invalidate cache after successful write
                 self.invalidate_cache(name).await;
                 Ok(())
@@ -191,45 +220,73 @@ impl PromptManager {
 
     /// Update an existing prompt (async)
     pub async fn edit_prompt(&self, name: &str, content: &str) -> Result<()> {
-        // Validate name
         validate_prompt_name(name)?;
-
-        // Validate content first
         super::validation::validate_prompt_file(content)?;
 
         let path = self.prompts_dir.join(format!("{name}.j2.md"));
 
-        // Check exists (async)
-        if !fs::try_exists(&path).await.unwrap_or(false) {
-            anyhow::bail!("Prompt '{name}' not found. Use add_prompt to create.");
-        }
-
-        fs::write(&path, content)
+        // Atomic update-only operation - fails if file doesn't exist
+        match OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(false)  // CRITICAL: Fail if file doesn't exist (edit-only semantics)
+            .open(&path)
             .await
-            .with_context(|| format!("Failed to update prompt: {name}"))?;
-
-        self.invalidate_cache(name).await;
-        Ok(())
+        {
+            Ok(mut file) => {
+                // Write new content to existing file
+                file.write_all(content.as_bytes())
+                    .await
+                    .with_context(|| format!("Failed to write prompt: {name}"))?;
+                
+                // Ensure data is flushed to disk
+                file.flush()
+                    .await
+                    .with_context(|| format!("Failed to flush prompt: {name}"))?;
+                
+                // Sync to disk for durability (survive power loss)
+                file.sync_all()
+                    .await
+                    .with_context(|| format!("Failed to sync prompt to disk: {name}"))?;
+                
+                // Invalidate cache after successful write
+                self.invalidate_cache(name).await;
+                Ok(())
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                // File doesn't exist - provide helpful error message
+                anyhow::bail!("Prompt '{name}' not found. Use add_prompt to create.")
+            }
+            Err(e) => {
+                // Other IO error (permissions, disk full, etc.)
+                Err(e).with_context(|| format!("Failed to update prompt: {name}"))?
+            }
+        }
     }
 
     /// Delete a prompt (async)
     pub async fn delete_prompt(&self, name: &str) -> Result<()> {
-        // Validate name
         validate_prompt_name(name)?;
 
         let path = self.prompts_dir.join(format!("{name}.j2.md"));
 
-        // Check exists (async)
-        if !fs::try_exists(&path).await.unwrap_or(false) {
-            anyhow::bail!("Prompt '{name}' not found");
+        // Attempt delete directly, handle errors appropriately
+        match fs::remove_file(&path).await {
+            Ok(()) => {
+                self.invalidate_cache(name).await;
+                Ok(())
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                anyhow::bail!("Prompt '{name}' not found")
+            }
+            Err(e) if e.kind() == ErrorKind::IsADirectory => {
+                anyhow::bail!("'{name}' is a directory, not a prompt file")
+            }
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                anyhow::bail!("Permission denied to delete prompt '{name}'")
+            }
+            Err(e) => Err(e).with_context(|| format!("Failed to delete prompt: {name}"))?
         }
-
-        fs::remove_file(&path)
-            .await
-            .with_context(|| format!("Failed to delete prompt: {name}"))?;
-
-        self.invalidate_cache(name).await;
-        Ok(())
     }
 
     /// Render a prompt with parameters (async)
@@ -239,7 +296,7 @@ impl PromptManager {
         parameters: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<String> {
         let template = self.load_prompt(name).await?;
-        render_template(&template, parameters.as_ref())
+        render_template(&template, parameters.as_ref()).await
     }
 
     /// Invalidate cached entry for a specific prompt
@@ -277,33 +334,50 @@ fn validate_prompt_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Quick validation check for prompt names (inline version for list_prompts)
+/// Mirrors the logic in validate_prompt_name() for early filtering
+fn is_valid_prompt_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        && !name.contains("..")
+}
+
 /// Initialize default prompts on first run (async)
 async fn initialize_default_prompts(prompts_dir: &Path) -> Result<()> {
-    // Check if directory has any .j2.md or .md files
-    let mut entries = fs::read_dir(prompts_dir).await?;
-    let mut has_prompts = false;
-
-    while let Some(entry) = entries.next_entry().await? {
-        if entry
-            .path()
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|ext| ext == "md")
-        {
-            has_prompts = true;
-            break;
+    // Fast check: does the first default prompt exist?
+    // If it exists, assume initialization already happened
+    let first_default = defaults::DEFAULT_PROMPTS[0].0;
+    let path = prompts_dir.join(format!("{first_default}.j2.md"));
+    
+    // Check existence, propagating errors instead of masking them
+    match fs::try_exists(&path).await {
+        Ok(true) => {
+            // Initialization already complete - return immediately
+            return Ok(());
+        }
+        Ok(false) => {
+            // First run: write all default prompts
+            defaults::write_default_prompts(prompts_dir).await?;
+            
+            info!(
+                "Initialized {} default prompts in {}",
+                defaults::DEFAULT_PROMPTS.len(),
+                prompts_dir.display()
+            );
+        }
+        Err(e) => {
+            // Permission or IO error checking existence - propagate with context
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to check if default prompts exist in {}. \
+                     Check directory permissions.",
+                    prompts_dir.display()
+                )
+            });
         }
     }
-
-    if !has_prompts {
-        // Write default prompts from embedded data
-        defaults::write_default_prompts(prompts_dir).await?;
-        info!(
-            "Initialized {} default prompts in {}",
-            defaults::DEFAULT_PROMPTS.len(),
-            prompts_dir.display()
-        );
-    }
-
+    
     Ok(())
 }

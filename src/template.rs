@@ -5,6 +5,7 @@ use gray_matter::{Matter, Pod};
 use minijinja::Environment;
 use std::collections::HashMap;
 use std::sync::{LazyLock, OnceLock};
+use tokio::time::{timeout, Duration};
 
 /// Static empty HashMap for use when no parameters are provided
 static EMPTY_PARAMS: LazyLock<HashMap<String, serde_json::Value>> =
@@ -85,6 +86,52 @@ fn validate_metadata(metadata: &PromptMetadata) -> Result<()> {
     if metadata.author.is_empty() {
         anyhow::bail!("Author cannot be empty");
     }
+    
+    // Validate parameter definitions
+    for param in &metadata.parameters {
+        validate_parameter_definition(param)
+            .with_context(|| format!("Invalid parameter definition: '{}'", param.name))?;
+    }
+    
+    Ok(())
+}
+
+/// Validate a parameter definition's default value and logical consistency
+fn validate_parameter_definition(param: &super::metadata::ParameterDefinition) -> Result<()> {
+    // Check 1: If default exists, validate it matches declared type
+    if let Some(default) = &param.default {
+        // Reuse existing validation logic!
+        validate_parameter_type(param, default).with_context(|| {
+            format!(
+                "Parameter '{}' has default value type mismatch. \
+                 Declared as {:?} but default value is {}. \
+                 Default: {:?}\n\
+                 \n\
+                 Fix the template's YAML frontmatter to use the correct type for the default value.",
+                param.name,
+                param.param_type,
+                match default {
+                    serde_json::Value::Null => "null",
+                    serde_json::Value::Bool(_) => "boolean",
+                    serde_json::Value::Number(_) => "number",
+                    serde_json::Value::String(_) => "string",
+                    serde_json::Value::Array(_) => "array",
+                    serde_json::Value::Object(_) => "object",
+                },
+                default
+            )
+        })?;
+    }
+    
+    // Check 2: Validate logical consistency - required + default is contradictory
+    if param.required && param.default.is_some() {
+        anyhow::bail!(
+            "Parameter '{}' is marked as required but has a default value. \
+             This is contradictory - remove 'required: true' or remove the default.",
+            param.name
+        );
+    }
+    
     Ok(())
 }
 
@@ -95,28 +142,37 @@ fn validate_metadata(metadata: &PromptMetadata) -> Result<()> {
 /// - Parameter sizes are validated before rendering (max 1MB per param, 10MB total)
 /// - Parameter count is limited (max 100 parameters)
 /// - `MiniJinja` has built-in recursion limits (default ~500 levels)
-/// - Timeout enforcement (5 seconds) is handled at the tool layer in async context
+/// - **Timeout enforcement (5 seconds) prevents infinite loops and expensive operations**
+/// - Rendering runs in `spawn_blocking` to prevent blocking async executor
 /// - These protections prevent resource exhaustion from malicious templates and parameters
-pub fn render_template(
+pub async fn render_template(
     template: &PromptTemplate,
     parameters: Option<&HashMap<String, serde_json::Value>>,
 ) -> Result<String> {
-    let mut env = Environment::new();
-
-    // Configure environment
-    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
-
-    // Add template
-    env.add_template(&template.filename, &template.content)?;
-
-    // Build context
+    // Clone data for spawn_blocking (MiniJinja Environment is not Send)
+    let template_content = template.content.clone();
+    let template_filename = template.filename.clone();
     let ctx = build_context(template, parameters)?;
-
-    // Render
-    let tmpl = env.get_template(&template.filename)?;
-    let rendered = tmpl.render(ctx)?;
-
-    Ok(rendered)
+    
+    // Run rendering in blocking task pool with timeout
+    let render_task = tokio::task::spawn_blocking(move || {
+        let mut env = Environment::new();
+        env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+        env.add_template(&template_filename, &template_content)?;
+        let tmpl = env.get_template(&template_filename)?;
+        tmpl.render(ctx)
+    });
+    
+    match timeout(Duration::from_secs(5), render_task).await {
+        Ok(Ok(Ok(rendered))) => Ok(rendered),
+        Ok(Ok(Err(e))) => Err(e.into()),
+        Ok(Err(e)) => Err(anyhow::anyhow!("Render task panicked: {e}")),
+        Err(_) => Err(anyhow::anyhow!(
+            "Template rendering timed out after 5 seconds. \
+             Template may contain infinite loops, deeply nested constructs, \
+             or expensive operations. Simplify the template and try again."
+        )),
+    }
 }
 
 /// Build template context from parameters
