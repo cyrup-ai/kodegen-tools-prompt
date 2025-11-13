@@ -2,8 +2,8 @@ use super::manager::PromptManager;
 use kodegen_mcp_tool::Tool;
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{AddPromptArgs, AddPromptPromptArgs};
-use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
-use serde_json::{Value, json};
+use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
+use serde_json::json;
 
 #[derive(Clone)]
 pub struct AddPromptTool {
@@ -29,7 +29,7 @@ impl Tool for AddPromptTool {
     type PromptArgs = AddPromptPromptArgs;
 
     fn name() -> &'static str {
-        "add_prompt"
+        "prompt_add"
     }
 
     fn description() -> &'static str {
@@ -51,21 +51,41 @@ impl Tool for AddPromptTool {
         false // Will fail if prompt already exists
     }
 
-    async fn execute(&self, args: Self::Args) -> Result<Value, McpError> {
+    async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
+        let start = std::time::Instant::now();
+        
         // Add prompt (validates syntax automatically, async)
         self.manager
             .add_prompt(&args.name, &args.content)
             .await
             .map_err(McpError::Other)?;
 
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
         let path = format!("~/.kodegen/prompts/{}.j2.md", args.name);
+        let mut contents = Vec::new();
 
-        Ok(json!({
+        // 1. TERMINAL SUMMARY
+        let summary = format!(
+            "✓ Prompt '{}' created successfully\n\n\
+             Path: {}\n\
+             Elapsed: {:.0}ms",
+            args.name, path, elapsed_ms
+        );
+        contents.push(Content::text(summary));
+
+        // 2. JSON METADATA
+        let metadata = json!({
             "success": true,
             "name": args.name,
             "path": path,
+            "elapsed_ms": elapsed_ms,
             "message": format!("Prompt '{}' created successfully", args.name)
-        }))
+        });
+        let json_str = serde_json::to_string_pretty(&metadata)
+            .unwrap_or_else(|_| "{}".to_string());
+        contents.push(Content::text(json_str));
+
+        Ok(contents)
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {
@@ -81,10 +101,10 @@ impl Tool for AddPromptTool {
             PromptMessage {
                 role: PromptMessageRole::Assistant,
                 content: PromptMessageContent::text(
-                    "Use add_prompt to create custom prompt templates:\n\n\
+                    "Use prompt_add to create custom prompt templates:\n\n\
                      Example:\n\
                      ```\n\
-                     add_prompt({\n\
+                     prompt_add({\n\
                        \"name\": \"my_workflow\",\n\
                        \"content\": \"---\\n\
                      title: \\\"My Custom Workflow\\\"\\n\

@@ -52,7 +52,7 @@ The server typically runs on port 30438 when managed by kodegend.
 
 The server provides four MCP tools:
 
-#### 1. `add_prompt` - Create New Prompt
+#### 1. `prompt_add` - Create New Prompt
 
 ```json
 {
@@ -61,7 +61,7 @@ The server provides four MCP tools:
 }
 ```
 
-#### 2. `get_prompt` - Retrieve and Render Prompts
+#### 2. `prompt_get` - Retrieve and Render Prompts
 
 List all categories:
 ```json
@@ -97,7 +97,7 @@ Render prompt with parameters:
 }
 ```
 
-#### 3. `edit_prompt` - Update Existing Prompt
+#### 3. `prompt_edit` - Update Existing Prompt
 
 ```json
 {
@@ -106,7 +106,7 @@ Render prompt with parameters:
 }
 ```
 
-#### 4. `delete_prompt` - Remove Prompt
+#### 4. `prompt_delete` - Remove Prompt
 
 ```json
 {

@@ -2,8 +2,8 @@ use super::manager::PromptManager;
 use kodegen_mcp_tool::Tool;
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs};
-use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
-use serde_json::{Value, json};
+use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
+use serde_json::json;
 
 #[derive(Clone)]
 pub struct EditPromptTool {
@@ -29,7 +29,7 @@ impl Tool for EditPromptTool {
     type PromptArgs = EditPromptPromptArgs;
 
     fn name() -> &'static str {
-        "edit_prompt"
+        "prompt_edit"
     }
 
     fn description() -> &'static str {
@@ -50,18 +50,39 @@ impl Tool for EditPromptTool {
         true // Same content produces same result
     }
 
-    async fn execute(&self, args: Self::Args) -> Result<Value, McpError> {
+    async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
+        let start = std::time::Instant::now();
+        
         // Edit prompt (validates syntax automatically, async)
         self.manager
             .edit_prompt(&args.name, &args.content)
             .await
             .map_err(McpError::Other)?;
 
-        Ok(json!({
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let mut contents = Vec::new();
+
+        // 1. TERMINAL SUMMARY
+        let summary = format!(
+            "✓ Prompt '{}' updated successfully\n\n\
+             Path: ~/.kodegen/prompts/{}.j2.md\n\
+             Elapsed: {:.0}ms",
+            args.name, args.name, elapsed_ms
+        );
+        contents.push(Content::text(summary));
+
+        // 2. JSON METADATA
+        let metadata = json!({
             "success": true,
             "name": args.name,
+            "elapsed_ms": elapsed_ms,
             "message": format!("Prompt '{}' updated successfully", args.name)
-        }))
+        });
+        let json_str = serde_json::to_string_pretty(&metadata)
+            .unwrap_or_else(|_| "{}".to_string());
+        contents.push(Content::text(json_str));
+
+        Ok(contents)
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {
@@ -77,14 +98,14 @@ impl Tool for EditPromptTool {
             PromptMessage {
                 role: PromptMessageRole::Assistant,
                 content: PromptMessageContent::text(
-                    "Use edit_prompt to update an existing prompt template:\n\n\
+                    "Use prompt_edit to update an existing prompt template:\n\n\
                      1. First, get the current content:\n\
                      ```\n\
-                     get_prompt({\"action\": \"get\", \"name\": \"my_prompt\"})\n\
+                     prompt_get({\"action\": \"get\", \"name\": \"my_prompt\"})\n\
                      ```\n\n\
                      2. Then edit it:\n\
                      ```\n\
-                     edit_prompt({\n\
+                     prompt_edit({\n\
                        \"name\": \"my_prompt\",\n\
                        \"content\": \"---\\n\
                      title: \\\"Updated Title\\\"\\n\
