@@ -1,7 +1,7 @@
 use super::manager::PromptManager;
 use kodegen_mcp_tool::Tool;
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{GetPromptArgs, GetPromptPromptArgs, GetPromptAction};
+use kodegen_mcp_schema::prompt::{GetPromptArgs, GetPromptPromptArgs, GetPromptAction, PROMPT_GET};
 use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ impl Tool for GetPromptTool {
     type PromptArgs = GetPromptPromptArgs;
 
     fn name() -> &'static str {
-        "prompt_get"
+        PROMPT_GET
     }
 
     fn description() -> &'static str {

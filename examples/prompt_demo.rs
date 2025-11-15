@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::Context;
-use kodegen_mcp_client::tools;
+use kodegen_mcp_schema::prompt::*;
 use serde_json::json;
 use tracing::{error, info};
 
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     info!("1. Testing add_prompt");
     match client
         .call_tool(
-            tools::ADD_PROMPT,
+            PROMPT_ADD,
             json!({
                 "name": test_prompt_name,
                 "description": "A test prompt for demonstration",
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     // 2. GET_PROMPT - Retrieve the prompt
     info!("2. Testing get_prompt");
     match client
-        .call_tool(tools::GET_PROMPT, json!({ "name": test_prompt_name }))
+        .call_tool(PROMPT_GET, json!({ "name": test_prompt_name }))
         .await
     {
         Ok(result) => info!("Got prompt: {:?}", result),
@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     info!("3. Testing edit_prompt");
     match client
         .call_tool(
-            tools::EDIT_PROMPT,
+            PROMPT_EDIT,
             json!({
                 "name": test_prompt_name,
                 "description": "Updated test prompt description",
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
     // 4. DELETE_PROMPT - Delete the prompt
     info!("4. Testing delete_prompt");
     match client
-        .call_tool(tools::DELETE_PROMPT, json!({ "name": test_prompt_name }))
+        .call_tool(PROMPT_DELETE, json!({ "name": test_prompt_name }))
         .await
     {
         Ok(result) => info!("Deleted prompt: {:?}", result),

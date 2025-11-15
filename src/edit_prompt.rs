@@ -1,7 +1,7 @@
 use super::manager::PromptManager;
 use kodegen_mcp_tool::Tool;
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs};
+use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs, PROMPT_EDIT};
 use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
 use serde_json::json;
 
@@ -29,7 +29,7 @@ impl Tool for EditPromptTool {
     type PromptArgs = EditPromptPromptArgs;
 
     fn name() -> &'static str {
-        "prompt_edit"
+        PROMPT_EDIT
     }
 
     fn description() -> &'static str {
