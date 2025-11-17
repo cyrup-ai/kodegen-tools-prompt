@@ -1,4 +1,5 @@
 use super::manager::PromptManager;
+use super::template::parse_template;
 use kodegen_mcp_tool::Tool;
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs, PROMPT_EDIT};
@@ -51,23 +52,30 @@ impl Tool for EditPromptTool {
     }
 
     async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
-        let start = std::time::Instant::now();
-        
         // Edit prompt (validates syntax automatically, async)
         self.manager
             .edit_prompt(&args.name, &args.content)
             .await
             .map_err(McpError::Other)?;
 
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        // Parse the updated template to extract metadata
+        let filename = format!("{}.j2.md", args.name);
+        let template = parse_template(&filename, &args.content)
+            .map_err(McpError::Other)?;
+
+        // Calculate metrics
+        let template_length = args.content.len();
+        let parameter_count = template.metadata.parameters.len();
+
         let mut contents = Vec::new();
 
-        // 1. TERMINAL SUMMARY
+        // 1. TERMINAL SUMMARY (ANSI formatted)
         let summary = format!(
-            "✓ Prompt '{}' updated successfully\n\n\
-             Path: ~/.kodegen/prompts/{}.j2.md\n\
-             Elapsed: {:.0}ms",
-            args.name, args.name, elapsed_ms
+            "\x1b[33m󰆐 Prompt Updated: {}\x1b[0m\n\
+             󰢬 Template length: {} · Parameters: {}",
+            args.name,
+            template_length,
+            parameter_count
         );
         contents.push(Content::text(summary));
 
@@ -75,11 +83,11 @@ impl Tool for EditPromptTool {
         let metadata = json!({
             "success": true,
             "name": args.name,
-            "elapsed_ms": elapsed_ms,
-            "message": format!("Prompt '{}' updated successfully", args.name)
+            "template_length": template_length,
+            "parameter_count": parameter_count
         });
         let json_str = serde_json::to_string_pretty(&metadata)
-            .unwrap_or_else(|_| "{}".to_string());
+            .map_err(|e| McpError::Other(e.into()))?;
         contents.push(Content::text(json_str));
 
         Ok(contents)

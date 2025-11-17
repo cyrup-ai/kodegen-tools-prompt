@@ -1,4 +1,5 @@
 use super::manager::PromptManager;
+use super::template::parse_template;
 use kodegen_mcp_tool::Tool;
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{AddPromptArgs, AddPromptPromptArgs, PROMPT_ADD};
@@ -53,7 +54,15 @@ impl Tool for AddPromptTool {
 
     async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
         let start = std::time::Instant::now();
-        
+
+        // Parse template to extract metadata (for output formatting)
+        let template = parse_template(&args.name, &args.content)
+            .map_err(McpError::Other)?;
+
+        // Extract statistics
+        let param_count = template.metadata.parameters.len();
+        let template_length = template.content.len();
+
         // Add prompt (validates syntax automatically, async)
         self.manager
             .add_prompt(&args.name, &args.content)
@@ -64,12 +73,13 @@ impl Tool for AddPromptTool {
         let path = format!("~/.kodegen/prompts/{}.j2.md", args.name);
         let mut contents = Vec::new();
 
-        // 1. TERMINAL SUMMARY
+        // 1. TERMINAL SUMMARY - ANSI formatted with Nerd Font icons
         let summary = format!(
-            "✓ Prompt '{}' created successfully\n\n\
-             Path: {}\n\
-             Elapsed: {:.0}ms",
-            args.name, path, elapsed_ms
+            "\x1b[32m Prompt Added: {}\x1b[0m\n\
+              Template length: {} · Parameters: {}",
+            args.name,
+            template_length,
+            param_count
         );
         contents.push(Content::text(summary));
 
@@ -79,6 +89,8 @@ impl Tool for AddPromptTool {
             "name": args.name,
             "path": path,
             "elapsed_ms": elapsed_ms,
+            "template_length": template_length,
+            "parameter_count": param_count,
             "message": format!("Prompt '{}' created successfully", args.name)
         });
         let json_str = serde_json::to_string_pretty(&metadata)

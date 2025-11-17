@@ -94,41 +94,45 @@ impl Tool for GetPromptTool {
             GetPromptAction::ListCategories => {
                 let count = result["total"].as_u64().unwrap_or(0);
                 format!(
-                    "✓ Listed prompt categories\n\n\
-                     Categories: {}\n\
-                     Elapsed: {:.0}ms",
+                    "\x1b[36m󰗚 Prompt: List Categories\x1b[0m\n󰈙 Categories: {} · Elapsed: {:.0}ms",
                     count, elapsed_ms
                 )
             }
             GetPromptAction::ListPrompts => {
                 let count = result["count"].as_u64().unwrap_or(0);
-                let category_info = args.category
+                let category_suffix = args.category
                     .as_ref()
-                    .map(|c| format!(" in category '{}'", c))
+                    .map(|c| format!(" ({})", c))
                     .unwrap_or_default();
                 format!(
-                    "✓ Listed prompts{}\n\n\
-                     Count: {}\n\
-                     Elapsed: {:.0}ms",
-                    category_info, count, elapsed_ms
+                    "\x1b[36m󰗚 Prompt: List Prompts{}\x1b[0m\n󰈙 Count: {} · Elapsed: {:.0}ms",
+                    category_suffix, count, elapsed_ms
                 )
             }
             GetPromptAction::Get => {
                 let name = result["name"].as_str().unwrap_or("unknown");
+                let content_length = result["content"]
+                    .as_str()
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                let param_count = result["metadata"]["parameters"]
+                    .as_array()
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
                 format!(
-                    "✓ Retrieved prompt '{}'\n\n\
-                     Rendered: false\n\
-                     Elapsed: {:.0}ms",
-                    name, elapsed_ms
+                    "\x1b[36m󰗚 Prompt: {}\x1b[0m\n󰈙 Template Length: {} chars · Parameters: {}",
+                    name, content_length, param_count
                 )
             }
             GetPromptAction::Render => {
                 let name = result["name"].as_str().unwrap_or("unknown");
+                let rendered_length = result["content"]
+                    .as_str()
+                    .map(|s| s.len())
+                    .unwrap_or(0);
                 format!(
-                    "✓ Rendered prompt '{}'\n\n\
-                     Rendered: true\n\
-                     Elapsed: {:.0}ms",
-                    name, elapsed_ms
+                    "\x1b[36m󰗚 Prompt: {} (Rendered)\x1b[0m\n󰈙 Output Length: {} chars · Elapsed: {:.0}ms",
+                    name, rendered_length, elapsed_ms
                 )
             }
         };

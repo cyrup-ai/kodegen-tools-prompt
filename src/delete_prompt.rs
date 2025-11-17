@@ -68,10 +68,9 @@ impl Tool for DeletePromptTool {
 
         // 1. TERMINAL SUMMARY
         let summary = format!(
-            "✓ Prompt '{}' deleted successfully\n\n\
-             Action: Permanent deletion\n\
-             Elapsed: {:.0}ms",
-            args.name, elapsed_ms
+            "\x1b[31m󰜑 Prompt Deleted: {}\x1b[0m\n\
+             \x1b[31m󰄳 Status: removed\x1b[0m",
+            args.name
         );
         contents.push(Content::text(summary));
 
