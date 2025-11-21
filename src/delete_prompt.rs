@@ -1,5 +1,5 @@
 use super::manager::PromptManager;
-use kodegen_mcp_tool::Tool;
+use kodegen_mcp_tool::{Tool, ToolExecutionContext};
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{DeletePromptArgs, DeletePromptPromptArgs, PROMPT_DELETE};
 use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
@@ -49,7 +49,7 @@ impl Tool for DeletePromptTool {
         false // Second deletion will fail (file gone)
     }
 
-    async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
         if !args.confirm {
             return Err(McpError::InvalidArguments(
                 "Must set confirm=true to delete a prompt".into(),

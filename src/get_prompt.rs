@@ -1,5 +1,5 @@
 use super::manager::PromptManager;
-use kodegen_mcp_tool::Tool;
+use kodegen_mcp_tool::{Tool, ToolExecutionContext};
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{GetPromptArgs, GetPromptPromptArgs, GetPromptAction, PROMPT_GET};
 use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
@@ -59,7 +59,7 @@ impl Tool for GetPromptTool {
         true
     }
 
-    async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
         let start = std::time::Instant::now();
         let action_name = match args.action {
             GetPromptAction::ListCategories => "list_categories",

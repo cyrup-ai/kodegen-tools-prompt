@@ -1,6 +1,6 @@
 use super::manager::PromptManager;
 use super::template::parse_template;
-use kodegen_mcp_tool::Tool;
+use kodegen_mcp_tool::{Tool, ToolExecutionContext};
 use kodegen_mcp_tool::error::McpError;
 use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs, PROMPT_EDIT};
 use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
@@ -51,7 +51,7 @@ impl Tool for EditPromptTool {
         true // Same content produces same result
     }
 
-    async fn execute(&self, args: Self::Args) -> Result<Vec<Content>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
         // Edit prompt (validates syntax automatically, async)
         self.manager
             .edit_prompt(&args.name, &args.content)
