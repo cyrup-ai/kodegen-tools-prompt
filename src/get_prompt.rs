@@ -150,40 +150,130 @@ impl Tool for GetPromptTool {
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {
-        vec![]
+        vec![PromptArgument {
+            name: "focus_area".to_string(),
+            title: None,
+            description: Some(
+                "Which aspect to focus on: 'browsing' (discovering prompts), 'rendering' (using templates), \
+                 'parameters' (template parameters and customization), or 'all' (comprehensive overview)"
+                    .to_string(),
+            ),
+            required: Some(false),
+        }]
     }
 
     async fn prompt(&self, _args: Self::PromptArgs) -> Result<Vec<PromptMessage>, McpError> {
         Ok(vec![
             PromptMessage {
                 role: PromptMessageRole::User,
-                content: PromptMessageContent::text("How do I browse and use prompts?"),
+                content: PromptMessageContent::text(
+                    "I need to work with prompt templates. What can the prompt_get tool do?"
+                ),
             },
             PromptMessage {
                 role: PromptMessageRole::Assistant,
                 content: PromptMessageContent::text(
-                    "Use prompt_get to browse and retrieve prompt templates:\n\n\
-                     1. List all categories:\n\
+                    "The prompt_get tool helps you browse, discover, retrieve, and render prompt templates. It has 4 actions:\n\n\
+                     **1. list_categories** - Discover all available prompt categories and their counts\n\
                      ```\n\
-                     get_prompt({\"action\": \"list_categories\"})\n\
-                     ```\n\n\
-                     2. List prompts (all or by category):\n\
+                     prompt_get({\"action\": \"list_categories\"})\n\
                      ```\n\
-                     get_prompt({\"action\": \"list_prompts\"})\n\
-                     get_prompt({\"action\": \"list_prompts\", \"category\": \"onboarding\"})\n\
-                     ```\n\n\
-                     3. Get raw prompt content:\n\
+                     Returns categories like 'onboarding', 'analysis', 'documentation', etc. Use this to explore what prompts are available.\n\n\
+                     **2. list_prompts** - List all prompts or filter by category\n\
                      ```\n\
-                     get_prompt({\"action\": \"get\", \"name\": \"getting_started\"})\n\
-                     ```\n\n\
-                     4. Render prompt with parameters:\n\
+                     prompt_get({\"action\": \"list_prompts\"})\n\
+                     prompt_get({\"action\": \"list_prompts\", \"category\": \"onboarding\"})\n\
                      ```\n\
-                     get_prompt({\n\
+                     Each result includes: name, title, description, categories, author, verification status, and available parameters.\n\n\
+                     **3. get** - Retrieve the raw template content and metadata\n\
+                     ```\n\
+                     prompt_get({\"action\": \"get\", \"name\": \"getting_started\"})\n\
+                     ```\n\
+                     Returns the Jinja2 template with YAML frontmatter containing metadata and parameter definitions.\n\n\
+                     **4. render** - Render a template with actual parameter values\n\
+                     ```\n\
+                     prompt_get({\n\
                        \"action\": \"render\",\n\
                        \"name\": \"analyze_project\",\n\
-                       \"parameters\": {\"project_path\": \"/my/project\"}\n\
+                       \"parameters\": {\"project_path\": \"/my/project\", \"depth\": \"detailed\"}\n\
                      })\n\
-                     ```",
+                     ```\n\
+                     This produces the final prompt text ready for use with an LLM."
+                ),
+            },
+            PromptMessage {
+                role: PromptMessageRole::User,
+                content: PromptMessageContent::text(
+                    "How do I understand template parameters and what makes a prompt renderable?"
+                ),
+            },
+            PromptMessage {
+                role: PromptMessageRole::Assistant,
+                content: PromptMessageContent::text(
+                    "Prompts are Jinja2 templates stored with YAML frontmatter. The metadata defines parameters:\n\n\
+                     **Understanding Template Parameters:**\n\
+                     - Parameters are defined in the YAML frontmatter section at the top of the template\n\
+                     - Each parameter has a name, description, type, and sometimes default values\n\
+                     - Use list_prompts to see available parameters for each prompt\n\
+                     - Use get to inspect the actual template and see how parameters are used\n\n\
+                     **Rendering Workflow:**\n\
+                     1. List prompts to find a template matching your need\n\
+                     2. Use get to understand what parameters it requires\n\
+                     3. Use render with parameter values matching the template's requirements\n\n\
+                     **Example:**\n\
+                     ```\n\
+                     // First, explore\n\
+                     prompt_get({\"action\": \"list_prompts\", \"category\": \"analysis\"})\n\
+                     \n\
+                     // Get template details\n\
+                     prompt_get({\"action\": \"get\", \"name\": \"code_review_checklist\"})\n\
+                     \n\
+                     // Render with your data\n\
+                     prompt_get({\n\
+                       \"action\": \"render\",\n\
+                       \"name\": \"code_review_checklist\",\n\
+                       \"parameters\": {\n\
+                         \"code_snippet\": \"...\",\n\
+                         \"language\": \"rust\",\n\
+                         \"context\": \"memory-safe networking code\"\n\
+                       }\n\
+                     })\n\
+                     ```\n\n\
+                     **Best Practice:** Always use get to inspect parameters before rendering to ensure you're providing the right values."
+                ),
+            },
+            PromptMessage {
+                role: PromptMessageRole::User,
+                content: PromptMessageContent::text(
+                    "When should I use each action? Any tips for working with prompts efficiently?"
+                ),
+            },
+            PromptMessage {
+                role: PromptMessageRole::Assistant,
+                content: PromptMessageContent::text(
+                    "**Decision Tree for Choosing Actions:**\n\n\
+                     - **list_categories** → When you need to explore what domains of prompts exist\n\
+                     - **list_prompts** → When you know the category but not the exact prompt name\n\
+                     - **list_prompts** (no category) → Quick scan of ALL available prompts\n\
+                     - **get** → When you need to see the template structure or understand parameters\n\
+                     - **render** → When you're ready to generate final prompt text for an LLM\n\n\
+                     **Efficiency Tips:**\n\
+                     1. Cache category knowledge - don't query list_categories repeatedly\n\
+                     2. Use category filters when searching large prompt libraries\n\
+                     3. Get familiar with commonly-used prompts to reduce lookup overhead\n\
+                     4. Store rendered prompts for reuse with the same parameters\n\
+                     5. Validate parameter types before rendering - check the template's parameter definitions\n\n\
+                     **Common Workflows:**\n\n\
+                     *Workflow A: Discover and use a prompt*\n\
+                     - list_prompts → get (on interesting prompt) → render (with your data)\n\n\
+                     *Workflow B: Quick rendering of known template*\n\
+                     - render directly (if you already know the prompt name and parameters)\n\n\
+                     *Workflow C: Categorized search*\n\
+                     - list_categories → list_prompts (with category) → get → render\n\n\
+                     **Important Notes:**\n\
+                     - The tool is read-only (doesn't modify prompts or templates)\n\
+                     - All operations are idempotent - safe to retry\n\
+                     - Use verified prompts (check the \"verified\" flag in list output) for production workflows"
                 ),
             },
         ])

@@ -94,7 +94,40 @@ impl Tool for EditPromptTool {
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {
-        vec![]
+        vec![
+            PromptArgument {
+                name: "focus_area".to_string(),
+                title: None,
+                description: Some(
+                    "Which aspect of edit_prompt to focus on: \
+                     'syntax' (Jinja2 template syntax), \
+                     'validation' (validation process and errors), \
+                     'examples' (real-world template examples), \
+                     'best_practices' (tips and gotchas)"
+                        .to_string(),
+                ),
+                required: Some(false),
+            },
+            PromptArgument {
+                name: "template_complexity".to_string(),
+                title: None,
+                description: Some(
+                    "Complexity level of template examples: 'simple' for basic templates, \
+                     'advanced' for complex templates with many parameters"
+                        .to_string(),
+                ),
+                required: Some(false),
+            },
+            PromptArgument {
+                name: "include_common_mistakes".to_string(),
+                title: None,
+                description: Some(
+                    "Include examples of common mistakes and how to avoid them when editing prompts"
+                        .to_string(),
+                ),
+                required: Some(false),
+            },
+        ]
     }
 
     async fn prompt(&self, _args: Self::PromptArgs) -> Result<Vec<PromptMessage>, McpError> {
