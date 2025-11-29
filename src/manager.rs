@@ -2,6 +2,7 @@ use super::defaults;
 use super::metadata::PromptTemplate;
 use super::template::{parse_template, render_template};
 use anyhow::{Context, Result};
+use kodegen_config::KodegenConfig;
 use kodegen_mcp_tool::error::McpError;
 use log::{debug, info, warn};
 use std::collections::HashMap;
@@ -307,11 +308,17 @@ impl PromptManager {
 }
 
 /// Get the prompts directory path
+/// Supports both local (.kodegen/prompts/) and user-global config with precedence
 fn get_prompts_directory() -> Result<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-
-    Ok(home.join(".kodegen").join("prompts"))
+    KodegenConfig::local_config_dir()
+        .ok()
+        .map(|dir| dir.join("prompts"))
+        .or_else(|| {
+            KodegenConfig::user_config_dir()
+                .ok()
+                .map(|dir| dir.join("prompts"))
+        })
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine prompts directory"))
 }
 
 /// Validate prompt name to prevent path traversal
