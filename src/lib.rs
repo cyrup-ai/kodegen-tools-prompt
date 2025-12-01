@@ -85,3 +85,62 @@ pub async fn start_server(
         })
     }).await
 }
+
+/// Start prompt tools HTTP server using pre-bound listener (TOCTOU-safe)
+///
+/// This variant is used by kodegend to eliminate TOCTOU race conditions
+/// during port cleanup. The listener is already bound to a port.
+///
+/// # Arguments
+/// * `listener` - Pre-bound TcpListener (port already reserved)
+/// * `tls_config` - Optional (cert_path, key_path) for HTTPS
+///
+/// # Returns
+/// ServerHandle for graceful shutdown, or error if startup fails
+pub async fn start_server_with_listener(
+    listener: tokio::net::TcpListener,
+    tls_config: Option<(std::path::PathBuf, std::path::PathBuf)>,
+) -> anyhow::Result<kodegen_server_http::ServerHandle> {
+    use kodegen_server_http::{create_http_server_with_listener, Managers, RouterSet, register_tool};
+    use rmcp::handler::server::router::{prompt::PromptRouter, tool::ToolRouter};
+    use std::time::Duration;
+
+    let shutdown_timeout = Duration::from_secs(30);
+    let session_keep_alive = Duration::ZERO;
+
+    create_http_server_with_listener("prompt", listener, tls_config, shutdown_timeout, session_keep_alive, |_config, _tracker| {
+        Box::pin(async move {
+            let mut tool_router = ToolRouter::new();
+            let mut prompt_router = PromptRouter::new();
+            let managers = Managers::new();
+
+            // Initialize PromptManager (clean async initialization)
+            let manager = crate::PromptManager::new();
+            manager.init().await?;
+
+            // Register all 4 prompt management tools with shared manager
+            (tool_router, prompt_router) = register_tool(
+                tool_router,
+                prompt_router,
+                crate::AddPromptTool::with_manager(manager.clone()),
+            );
+            (tool_router, prompt_router) = register_tool(
+                tool_router,
+                prompt_router,
+                crate::EditPromptTool::with_manager(manager.clone()),
+            );
+            (tool_router, prompt_router) = register_tool(
+                tool_router,
+                prompt_router,
+                crate::DeletePromptTool::with_manager(manager.clone()),
+            );
+            (tool_router, prompt_router) = register_tool(
+                tool_router,
+                prompt_router,
+                crate::GetPromptTool::with_manager(manager.clone()),
+            );
+
+            Ok(RouterSet::new(tool_router, prompt_router, managers))
+        })
+    }).await
+}
