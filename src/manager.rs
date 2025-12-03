@@ -3,6 +3,7 @@ use super::metadata::PromptTemplate;
 use super::template::{parse_template, render_template};
 use anyhow::{Context, Result};
 use kodegen_config::KodegenConfig;
+use kodegen_mcp_schema::prompt::TemplateParamValue;
 use kodegen_mcp_tool::error::McpError;
 use log::{debug, info, warn};
 use std::collections::HashMap;
@@ -294,7 +295,7 @@ impl PromptManager {
     pub async fn render_prompt(
         &self,
         name: &str,
-        parameters: Option<HashMap<String, serde_json::Value>>,
+        parameters: Option<HashMap<String, TemplateParamValue>>,
     ) -> Result<String> {
         let template = self.load_prompt(name).await?;
         render_template(&template, parameters.as_ref()).await

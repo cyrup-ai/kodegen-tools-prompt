@@ -1,9 +1,14 @@
 use super::manager::PromptManager;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolResponse};
+use super::metadata::PromptTemplate;
+use kodegen_mcp_schema::prompt::{
+    CategoryInfo, GetPromptAction, GetPromptArgs, GetPromptPromptArgs, PromptCategoriesResult,
+    PromptContentResult, PromptGetOutput, PromptListResult, PromptMetadataOutput,
+    PromptParameterDef, PromptParameterType, PromptRenderedResult, PromptResult, PromptSummary,
+    TemplateParamValue, PROMPT_GET,
+};
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{GetPromptArgs, GetPromptPromptArgs, GetPromptAction, PromptGetOutput, PROMPT_GET};
+use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolResponse};
 use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
-use serde_json::{Value, json};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -59,92 +64,88 @@ impl Tool for GetPromptTool {
         true
     }
 
-    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as kodegen_mcp_tool::ToolArgs>::Output>, McpError> {
+    async fn execute(
+        &self,
+        args: Self::Args,
+        _ctx: ToolExecutionContext,
+    ) -> Result<ToolResponse<<Self::Args as kodegen_mcp_tool::ToolArgs>::Output>, McpError> {
         let start = std::time::Instant::now();
-        let action_name = match args.action {
-            GetPromptAction::ListCategories => "list_categories",
-            GetPromptAction::ListPrompts => "list_prompts",
-            GetPromptAction::Get => "get",
-            GetPromptAction::Render => "render",
-        };
-        
-        // Execute the action to get JSON result
-        let result = match args.action {
-            GetPromptAction::ListCategories => self.list_categories().await?,
-            GetPromptAction::ListPrompts => self.list_prompts(args.category.as_deref()).await?,
+        let action = args.action.clone();
+
+        // Execute the action to get typed result
+        let result = match &args.action {
+            GetPromptAction::ListCategories => {
+                let mut res = self.list_categories().await?;
+                res.elapsed_ms = Some(start.elapsed().as_secs_f64() * 1000.0);
+                PromptResult::ListCategories(res)
+            }
+            GetPromptAction::ListPrompts => {
+                let mut res = self.list_prompts(args.category.as_deref()).await?;
+                res.elapsed_ms = Some(start.elapsed().as_secs_f64() * 1000.0);
+                PromptResult::ListPrompts(res)
+            }
             GetPromptAction::Get => {
-                let name = args.name.ok_or_else(|| {
+                let name = args.name.as_ref().ok_or_else(|| {
                     McpError::InvalidArguments("name required for get action".into())
                 })?;
-                self.get_prompt(&name).await?
+                let mut res = self.get_prompt(name).await?;
+                res.elapsed_ms = Some(start.elapsed().as_secs_f64() * 1000.0);
+                PromptResult::Get(res)
             }
             GetPromptAction::Render => {
-                let name = args.name.ok_or_else(|| {
+                let name = args.name.as_ref().ok_or_else(|| {
                     McpError::InvalidArguments("name required for render action".into())
                 })?;
-                self.render_prompt(&name, args.parameters).await?
+                let mut res = self.render_prompt(name, args.parameters).await?;
+                res.elapsed_ms = Some(start.elapsed().as_secs_f64() * 1000.0);
+                PromptResult::Render(res)
             }
         };
-        
+
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         // Terminal summary - varies by action
-        let summary = match args.action {
-            GetPromptAction::ListCategories => {
-                let count = result["total"].as_u64().unwrap_or(0);
+        let summary = match &result {
+            PromptResult::ListCategories(res) => {
                 format!(
                     "\x1b[36m󰗚 Prompt: List Categories\x1b[0m\n󰈙 Categories: {} · Elapsed: {:.0}ms",
-                    count, elapsed_ms
+                    res.total, elapsed_ms
                 )
             }
-            GetPromptAction::ListPrompts => {
-                let count = result["count"].as_u64().unwrap_or(0);
-                let category_suffix = args.category
+            PromptResult::ListPrompts(res) => {
+                let category_suffix = res
+                    .category
                     .as_ref()
                     .map(|c| format!(" ({})", c))
                     .unwrap_or_default();
                 format!(
                     "\x1b[36m󰗚 Prompt: List Prompts{}\x1b[0m\n󰈙 Count: {} · Elapsed: {:.0}ms",
-                    category_suffix, count, elapsed_ms
+                    category_suffix, res.count, elapsed_ms
                 )
             }
-            GetPromptAction::Get => {
-                let name = result["name"].as_str().unwrap_or("unknown");
-                let content_length = result["content"]
-                    .as_str()
-                    .map(|s| s.len())
-                    .unwrap_or(0);
-                let param_count = result["metadata"]["parameters"]
-                    .as_array()
-                    .map(|arr| arr.len())
-                    .unwrap_or(0);
+            PromptResult::Get(res) => {
                 format!(
                     "\x1b[36m󰗚 Prompt: {}\x1b[0m\n󰈙 Template Length: {} chars · Parameters: {}",
-                    name, content_length, param_count
+                    res.name,
+                    res.content.len(),
+                    res.metadata.parameters.len()
                 )
             }
-            GetPromptAction::Render => {
-                let name = result["name"].as_str().unwrap_or("unknown");
-                let rendered_length = result["content"]
-                    .as_str()
-                    .map(|s| s.len())
-                    .unwrap_or(0);
+            PromptResult::Render(res) => {
                 format!(
                     "\x1b[36m󰗚 Prompt: {} (Rendered)\x1b[0m\n󰈙 Output Length: {} chars · Elapsed: {:.0}ms",
-                    name, rendered_length, elapsed_ms
+                    res.name,
+                    res.content.len(),
+                    elapsed_ms
                 )
             }
         };
 
-        // Add timing to result data
-        let mut data = result;
-        data["elapsed_ms"] = json!(elapsed_ms);
-
         // Typed output
         let output = PromptGetOutput {
             success: true,
-            action: action_name.to_string(),
-            data,
+            action,
+            result,
         };
 
         Ok(ToolResponse::new(summary, output))
@@ -282,7 +283,7 @@ impl Tool for GetPromptTool {
 }
 
 impl GetPromptTool {
-    async fn list_categories(&self) -> Result<Value, McpError> {
+    async fn list_categories(&self) -> Result<PromptCategoriesResult, McpError> {
         let prompts = self.manager.list_prompts().await.map_err(McpError::Other)?;
 
         // Group by category and count
@@ -293,18 +294,20 @@ impl GetPromptTool {
             }
         }
 
-        let categories: Vec<_> = category_map
+        let categories: Vec<CategoryInfo> = category_map
             .into_iter()
-            .map(|(name, count)| json!({"name": name, "count": count}))
+            .map(|(name, count)| CategoryInfo { name, count })
             .collect();
 
-        Ok(json!({
-            "categories": categories,
-            "total": categories.len()
-        }))
+        let total = categories.len();
+        Ok(PromptCategoriesResult {
+            categories,
+            total,
+            elapsed_ms: None,
+        })
     }
 
-    async fn list_prompts(&self, category: Option<&str>) -> Result<Value, McpError> {
+    async fn list_prompts(&self, category: Option<&str>) -> Result<PromptListResult, McpError> {
         let mut prompts = self.manager.list_prompts().await.map_err(McpError::Other)?;
 
         // Filter by category if specified
@@ -312,58 +315,106 @@ impl GetPromptTool {
             prompts.retain(|p| p.metadata.categories.contains(&cat.to_string()));
         }
 
-        let prompts_json: Vec<_> = prompts
+        let prompts_list: Vec<PromptSummary> = prompts
             .iter()
-            .map(|p| {
-                json!({
-                    "name": p.filename,
-                    "title": p.metadata.title,
-                    "description": p.metadata.description,
-                    "categories": p.metadata.categories,
-                    "author": p.metadata.author,
-                    "verified": p.metadata.verified,
-                    "parameters": p.metadata.parameters,
-                })
+            .map(|p| PromptSummary {
+                name: p.filename.clone(),
+                title: p.metadata.title.clone(),
+                description: p.metadata.description.clone(),
+                categories: p.metadata.categories.clone(),
+                author: p.metadata.author.clone(),
+                verified: p.metadata.verified,
+                parameters: p
+                    .metadata
+                    .parameters
+                    .iter()
+                    .map(|param| PromptParameterDef {
+                        name: param.name.clone(),
+                        description: param.description.clone(),
+                        param_type: convert_param_type(&param.param_type),
+                        required: param.required,
+                        default: param.default.clone(),
+                    })
+                    .collect(),
             })
             .collect();
 
-        Ok(json!({
-            "prompts": prompts_json,
-            "count": prompts_json.len(),
-            "category": category
-        }))
+        let count = prompts_list.len();
+        Ok(PromptListResult {
+            prompts: prompts_list,
+            count,
+            category: category.map(String::from),
+            elapsed_ms: None,
+        })
     }
 
-    async fn get_prompt(&self, name: &str) -> Result<Value, McpError> {
+    async fn get_prompt(&self, name: &str) -> Result<PromptContentResult, McpError> {
         let template = self
             .manager
             .load_prompt(name)
             .await
             .map_err(McpError::Other)?;
 
-        Ok(json!({
-            "name": name,
-            "metadata": template.metadata,
-            "content": template.content,
-            "rendered": false
-        }))
+        Ok(PromptContentResult {
+            name: name.to_string(),
+            metadata: convert_metadata(&template),
+            content: template.content,
+            rendered: false,
+            elapsed_ms: None,
+        })
     }
 
     async fn render_prompt(
         &self,
         name: &str,
-        parameters: Option<HashMap<String, serde_json::Value>>,
-    ) -> Result<Value, McpError> {
+        parameters: Option<HashMap<String, TemplateParamValue>>,
+    ) -> Result<PromptRenderedResult, McpError> {
         let rendered = self
             .manager
             .render_prompt(name, parameters)
             .await
             .map_err(McpError::Other)?;
 
-        Ok(json!({
-            "name": name,
-            "content": rendered,
-            "rendered": true
-        }))
+        Ok(PromptRenderedResult {
+            name: name.to_string(),
+            content: rendered,
+            rendered: true,
+            elapsed_ms: None,
+        })
+    }
+}
+
+/// Convert internal ParameterType to schema PromptParameterType
+fn convert_param_type(pt: &super::metadata::ParameterType) -> PromptParameterType {
+    match pt {
+        super::metadata::ParameterType::String => PromptParameterType::String,
+        super::metadata::ParameterType::Number => PromptParameterType::Number,
+        super::metadata::ParameterType::Boolean => PromptParameterType::Boolean,
+        super::metadata::ParameterType::Array => PromptParameterType::Array,
+    }
+}
+
+/// Convert internal PromptTemplate metadata to schema PromptMetadataOutput
+fn convert_metadata(template: &PromptTemplate) -> PromptMetadataOutput {
+    PromptMetadataOutput {
+        title: template.metadata.title.clone(),
+        description: template.metadata.description.clone(),
+        categories: template.metadata.categories.clone(),
+        secondary_tag: template.metadata.secondary_tag.clone(),
+        author: template.metadata.author.clone(),
+        verified: template.metadata.verified,
+        votes: template.metadata.votes,
+        parameters: template
+            .metadata
+            .parameters
+            .iter()
+            .map(|param| PromptParameterDef {
+                name: param.name.clone(),
+                description: param.description.clone(),
+                param_type: convert_param_type(&param.param_type),
+                required: param.required,
+                default: param.default.clone(),
+            })
+            .collect(),
     }
 }

@@ -2,14 +2,14 @@ use super::metadata::{ParameterType, PromptMetadata, PromptTemplate};
 use anyhow::{Context, Result};
 use gray_matter::engine::YAML;
 use gray_matter::{Matter, Pod};
+use kodegen_mcp_schema::prompt::TemplateParamValue;
 use minijinja::Environment;
 use std::collections::HashMap;
 use std::sync::{LazyLock, OnceLock};
 use tokio::time::{timeout, Duration};
 
 /// Static empty HashMap for use when no parameters are provided
-static EMPTY_PARAMS: LazyLock<HashMap<String, serde_json::Value>> =
-    LazyLock::new(HashMap::new);
+static EMPTY_PARAMS: LazyLock<HashMap<String, TemplateParamValue>> = LazyLock::new(HashMap::new);
 
 /// Get max parameter size (supports KODEGEN_MAX_PARAM_SIZE env var)
 fn get_max_param_size() -> usize {
@@ -102,27 +102,23 @@ fn validate_parameter_definition(param: &super::metadata::ParameterDefinition) -
     if let Some(default) = &param.default {
         // Reuse existing validation logic!
         validate_parameter_type(param, default).with_context(|| {
+            let actual_type = match default {
+                TemplateParamValue::String(_) => "string",
+                TemplateParamValue::Number(_) => "number",
+                TemplateParamValue::Bool(_) => "boolean",
+                TemplateParamValue::StringArray(_) => "array",
+            };
             format!(
                 "Parameter '{}' has default value type mismatch. \
                  Declared as {:?} but default value is {}. \
                  Default: {:?}\n\
                  \n\
                  Fix the template's YAML frontmatter to use the correct type for the default value.",
-                param.name,
-                param.param_type,
-                match default {
-                    serde_json::Value::Null => "null",
-                    serde_json::Value::Bool(_) => "boolean",
-                    serde_json::Value::Number(_) => "number",
-                    serde_json::Value::String(_) => "string",
-                    serde_json::Value::Array(_) => "array",
-                    serde_json::Value::Object(_) => "object",
-                },
-                default
+                param.name, param.param_type, actual_type, default
             )
         })?;
     }
-    
+
     // Check 2: Validate logical consistency - required + default is contradictory
     if param.required && param.default.is_some() {
         anyhow::bail!(
@@ -131,7 +127,7 @@ fn validate_parameter_definition(param: &super::metadata::ParameterDefinition) -
             param.name
         );
     }
-    
+
     Ok(())
 }
 
@@ -147,7 +143,7 @@ fn validate_parameter_definition(param: &super::metadata::ParameterDefinition) -
 /// - These protections prevent resource exhaustion from malicious templates and parameters
 pub async fn render_template(
     template: &PromptTemplate,
-    parameters: Option<&HashMap<String, serde_json::Value>>,
+    parameters: Option<&HashMap<String, TemplateParamValue>>,
 ) -> Result<String> {
     // Clone data for spawn_blocking (MiniJinja Environment is not Send)
     let template_content = template.content.clone();
@@ -178,7 +174,7 @@ pub async fn render_template(
 /// Build template context from parameters
 fn build_context(
     template: &PromptTemplate,
-    parameters: Option<&HashMap<String, serde_json::Value>>,
+    parameters: Option<&HashMap<String, TemplateParamValue>>,
 ) -> Result<minijinja::Value> {
     let params = parameters.unwrap_or(&EMPTY_PARAMS);
 
@@ -299,32 +295,45 @@ fn load_blocked_env_vars_from_env() -> Vec<String> {
 /// 1. Blocklist is checked FIRST (takes precedence)
 /// 2. Then allowlist is checked
 /// 3. Supports glob patterns (*, PREFIX*, *SUFFIX, *MIDDLE*)
-fn add_env_vars(params: &mut HashMap<String, serde_json::Value>) {
+fn add_env_vars(params: &mut HashMap<String, TemplateParamValue>) {
     let allowed_patterns = load_allowed_env_vars_from_env();
     let blocked_patterns = load_blocked_env_vars_from_env();
 
-    let safe_env_vars: HashMap<String, String> = std::env::vars()
+    let safe_env_vars: Vec<String> = std::env::vars()
         .filter(|(key, _)| {
             // STEP 1: Check blocklist first (takes precedence)
-            let is_blocked = blocked_patterns.iter()
+            let is_blocked = blocked_patterns
+                .iter()
                 .any(|pattern| matches_env_pattern(key, pattern));
-            
+
             if is_blocked {
                 return false;
             }
 
             // STEP 2: Check allowlist
-            allowed_patterns.iter()
+            allowed_patterns
+                .iter()
                 .any(|pattern| matches_env_pattern(key, pattern))
         })
+        .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
-    // Add as env.* namespace in context
-    params.insert("env".to_string(), serde_json::json!(safe_env_vars));
+    // Add as env array in context (key=value format)
+    params.insert("env".to_string(), TemplateParamValue::StringArray(safe_env_vars));
+}
+
+/// Get the byte size of a TemplateParamValue
+fn param_value_size(value: &TemplateParamValue) -> usize {
+    match value {
+        TemplateParamValue::String(s) => s.len(),
+        TemplateParamValue::Number(_) => 8, // f64
+        TemplateParamValue::Bool(_) => 1,
+        TemplateParamValue::StringArray(arr) => arr.iter().map(|s| s.len()).sum(),
+    }
 }
 
 /// Validate parameter sizes to prevent resource exhaustion
-fn validate_parameter_sizes(params: &HashMap<String, serde_json::Value>) -> Result<()> {
+fn validate_parameter_sizes(params: &HashMap<String, TemplateParamValue>) -> Result<()> {
     let max_param_size = get_max_param_size();
     let max_param_count = get_max_param_count();
     let max_total_size = get_max_total_params_size();
@@ -342,10 +351,7 @@ fn validate_parameter_sizes(params: &HashMap<String, serde_json::Value>) -> Resu
     // Check individual parameter sizes and total
     let mut total_size = 0;
     for (name, value) in params {
-        // Serialize to get actual size in bytes
-        let param_bytes = serde_json::to_vec(value)
-            .with_context(|| format!("Failed to serialize parameter '{name}'"))?;
-        let param_size = param_bytes.len();
+        let param_size = param_value_size(value);
 
         // Check individual parameter size
         if param_size > max_param_size {
@@ -380,7 +386,7 @@ fn validate_parameter_sizes(params: &HashMap<String, serde_json::Value>) -> Resu
 /// Validate provided parameters match definitions
 fn validate_parameters(
     template: &PromptTemplate,
-    params: &HashMap<String, serde_json::Value>,
+    params: &HashMap<String, TemplateParamValue>,
 ) -> Result<()> {
     // Check required parameters are present
     for param_def in &template.metadata.parameters {
@@ -406,28 +412,28 @@ fn validate_parameters(
 /// Validate a parameter value matches its expected type
 fn validate_parameter_type(
     param_def: &super::metadata::ParameterDefinition,
-    value: &serde_json::Value,
+    value: &TemplateParamValue,
 ) -> Result<()> {
-    let valid = match param_def.param_type {
-        ParameterType::String => value.is_string(),
-        ParameterType::Number => value.is_number(),
-        ParameterType::Boolean => value.is_boolean(),
-        ParameterType::Array => value.is_array(),
+    let valid = match (&param_def.param_type, value) {
+        (ParameterType::String, TemplateParamValue::String(_)) => true,
+        (ParameterType::Number, TemplateParamValue::Number(_)) => true,
+        (ParameterType::Boolean, TemplateParamValue::Bool(_)) => true,
+        (ParameterType::Array, TemplateParamValue::StringArray(_)) => true,
+        _ => false,
     };
 
     if !valid {
+        let actual_type = match value {
+            TemplateParamValue::String(_) => "string",
+            TemplateParamValue::Number(_) => "number",
+            TemplateParamValue::Bool(_) => "boolean",
+            TemplateParamValue::StringArray(_) => "array",
+        };
         anyhow::bail!(
             "Parameter '{}' has wrong type. Expected {:?}, got {}",
             param_def.name,
             param_def.param_type,
-            match value {
-                serde_json::Value::Null => "null",
-                serde_json::Value::Bool(_) => "boolean",
-                serde_json::Value::Number(_) => "number",
-                serde_json::Value::String(_) => "string",
-                serde_json::Value::Array(_) => "array",
-                serde_json::Value::Object(_) => "object",
-            }
+            actual_type
         );
     }
 
@@ -437,17 +443,17 @@ fn validate_parameter_type(
 /// Apply default values for missing optional parameters
 fn apply_defaults(
     template: &PromptTemplate,
-    params: &HashMap<String, serde_json::Value>,
-) -> HashMap<String, serde_json::Value> {
+    params: &HashMap<String, TemplateParamValue>,
+) -> HashMap<String, TemplateParamValue> {
     // Pre-allocate capacity for provided params + potential defaults
     let capacity = params.len() + template.metadata.parameters.len();
     let mut result = HashMap::with_capacity(capacity);
-    
+
     // Copy all provided parameters
     for (key, value) in params {
         result.insert(key.clone(), value.clone());
     }
-    
+
     // Add defaults for missing optional parameters
     for param_def in &template.metadata.parameters {
         if !result.contains_key(&param_def.name)
@@ -456,6 +462,6 @@ fn apply_defaults(
             result.insert(param_def.name.clone(), default.clone());
         }
     }
-    
+
     result
 }

@@ -1,3 +1,4 @@
+use kodegen_mcp_schema::prompt::{PromptParameterType, TemplateParamValue};
 use serde::{Deserialize, Serialize};
 
 /// Prompt metadata from YAML frontmatter
@@ -21,26 +22,16 @@ pub struct PromptMetadata {
 pub struct ParameterDefinition {
     pub name: String,
     pub description: String,
-    #[serde(default = "default_param_type")]
-    pub param_type: ParameterType,
+    #[serde(default)]
+    pub param_type: PromptParameterType,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
-    pub default: Option<serde_json::Value>,
+    pub default: Option<TemplateParamValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ParameterType {
-    String,
-    Number,
-    Boolean,
-    Array,
-}
-
-fn default_param_type() -> ParameterType {
-    ParameterType::String
-}
+/// Re-export ParameterType as alias for backwards source compat within this crate
+pub type ParameterType = PromptParameterType;
 
 /// Full prompt template (metadata + content)
 #[derive(Debug, Clone)]
