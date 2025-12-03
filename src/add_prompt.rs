@@ -1,10 +1,9 @@
 use super::manager::PromptManager;
 use super::template::parse_template;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext};
+use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolResponse};
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{AddPromptArgs, AddPromptPromptArgs, PROMPT_ADD};
-use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
-use serde_json::json;
+use kodegen_mcp_schema::prompt::{AddPromptArgs, AddPromptPromptArgs, PromptAddOutput, PROMPT_ADD};
+use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
 
 #[derive(Clone)]
 pub struct AddPromptTool {
@@ -52,9 +51,7 @@ impl Tool for AddPromptTool {
         false // Will fail if prompt already exists
     }
 
-    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
-        let start = std::time::Instant::now();
-
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as kodegen_mcp_tool::ToolArgs>::Output>, McpError> {
         // Parse template to extract metadata (for output formatting)
         let template = parse_template(&args.name, &args.content)
             .map_err(McpError::Other)?;
@@ -69,11 +66,9 @@ impl Tool for AddPromptTool {
             .await
             .map_err(McpError::Other)?;
 
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
         let path = format!("~/.kodegen/prompts/{}.j2.md", args.name);
-        let mut contents = Vec::new();
 
-        // 1. TERMINAL SUMMARY - ANSI formatted with Nerd Font icons
+        // Terminal summary
         let summary = format!(
             "\x1b[32m Prompt Added: {}\x1b[0m\n\
               Template length: {} · Parameters: {}",
@@ -81,23 +76,18 @@ impl Tool for AddPromptTool {
             template_length,
             param_count
         );
-        contents.push(Content::text(summary));
 
-        // 2. JSON METADATA
-        let metadata = json!({
-            "success": true,
-            "name": args.name,
-            "path": path,
-            "elapsed_ms": elapsed_ms,
-            "template_length": template_length,
-            "parameter_count": param_count,
-            "message": format!("Prompt '{}' created successfully", args.name)
-        });
-        let json_str = serde_json::to_string_pretty(&metadata)
-            .unwrap_or_else(|_| "{}".to_string());
-        contents.push(Content::text(json_str));
+        // Typed output
+        let output = PromptAddOutput {
+            success: true,
+            name: args.name.clone(),
+            message: format!("Prompt '{}' created successfully", args.name),
+            path: Some(path),
+            template_length: Some(template_length),
+            parameter_count: Some(param_count),
+        };
 
-        Ok(contents)
+        Ok(ToolResponse::new(summary, output))
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {

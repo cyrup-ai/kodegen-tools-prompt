@@ -1,9 +1,8 @@
 use super::manager::PromptManager;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext};
+use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolResponse};
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{DeletePromptArgs, DeletePromptPromptArgs, PROMPT_DELETE};
-use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
-use serde_json::json;
+use kodegen_mcp_schema::prompt::{DeletePromptArgs, DeletePromptPromptArgs, PromptDeleteOutput, PROMPT_DELETE};
+use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
 
 #[derive(Clone)]
 pub struct DeletePromptTool {
@@ -49,43 +48,33 @@ impl Tool for DeletePromptTool {
         false // Second deletion will fail (file gone)
     }
 
-    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as kodegen_mcp_tool::ToolArgs>::Output>, McpError> {
         if !args.confirm {
             return Err(McpError::InvalidArguments(
                 "Must set confirm=true to delete a prompt".into(),
             ));
         }
 
-        let start = std::time::Instant::now();
-        
         self.manager
             .delete_prompt(&args.name)
             .await
             .map_err(McpError::Other)?;
 
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let mut contents = Vec::new();
-
-        // 1. TERMINAL SUMMARY
+        // Terminal summary
         let summary = format!(
             "\x1b[31m󰜑 Prompt Deleted: {}\x1b[0m\n\
              \x1b[31m󰄳 Status: removed\x1b[0m",
             args.name
         );
-        contents.push(Content::text(summary));
 
-        // 2. JSON METADATA
-        let metadata = json!({
-            "success": true,
-            "name": args.name,
-            "elapsed_ms": elapsed_ms,
-            "message": format!("Prompt '{}' deleted successfully", args.name)
-        });
-        let json_str = serde_json::to_string_pretty(&metadata)
-            .unwrap_or_else(|_| "{}".to_string());
-        contents.push(Content::text(json_str));
+        // Typed output
+        let output = PromptDeleteOutput {
+            success: true,
+            name: args.name.clone(),
+            message: format!("Prompt '{}' deleted successfully", args.name),
+        };
 
-        Ok(contents)
+        Ok(ToolResponse::new(summary, output))
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {

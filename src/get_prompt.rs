@@ -1,8 +1,8 @@
 use super::manager::PromptManager;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext};
+use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolResponse};
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{GetPromptArgs, GetPromptPromptArgs, GetPromptAction, PROMPT_GET};
-use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
+use kodegen_mcp_schema::prompt::{GetPromptArgs, GetPromptPromptArgs, GetPromptAction, PromptGetOutput, PROMPT_GET};
+use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -59,7 +59,7 @@ impl Tool for GetPromptTool {
         true
     }
 
-    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as kodegen_mcp_tool::ToolArgs>::Output>, McpError> {
         let start = std::time::Instant::now();
         let action_name = match args.action {
             GetPromptAction::ListCategories => "list_categories",
@@ -87,9 +87,8 @@ impl Tool for GetPromptTool {
         };
         
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let mut contents = Vec::new();
 
-        // 1. TERMINAL SUMMARY - varies by action
+        // Terminal summary - varies by action
         let summary = match args.action {
             GetPromptAction::ListCategories => {
                 let count = result["total"].as_u64().unwrap_or(0);
@@ -136,17 +135,19 @@ impl Tool for GetPromptTool {
                 )
             }
         };
-        contents.push(Content::text(summary));
 
-        // 2. JSON METADATA - complete result with timing
-        let mut metadata = result;
-        metadata["action"] = json!(action_name);
-        metadata["elapsed_ms"] = json!(elapsed_ms);
-        let json_str = serde_json::to_string_pretty(&metadata)
-            .unwrap_or_else(|_| "{}".to_string());
-        contents.push(Content::text(json_str));
+        // Add timing to result data
+        let mut data = result;
+        data["elapsed_ms"] = json!(elapsed_ms);
 
-        Ok(contents)
+        // Typed output
+        let output = PromptGetOutput {
+            success: true,
+            action: action_name.to_string(),
+            data,
+        };
+
+        Ok(ToolResponse::new(summary, output))
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {

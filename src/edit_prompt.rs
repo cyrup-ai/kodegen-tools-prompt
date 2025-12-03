@@ -1,10 +1,9 @@
 use super::manager::PromptManager;
 use super::template::parse_template;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext};
+use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolArgs, ToolResponse};
 use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs, PROMPT_EDIT};
-use rmcp::model::{Content, PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
-use serde_json::json;
+use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs, PromptEditOutput, PROMPT_EDIT};
+use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
 
 #[derive(Clone)]
 pub struct EditPromptTool {
@@ -51,7 +50,7 @@ impl Tool for EditPromptTool {
         true // Same content produces same result
     }
 
-    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<Vec<Content>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as ToolArgs>::Output>, McpError> {
         // Edit prompt (validates syntax automatically, async)
         self.manager
             .edit_prompt(&args.name, &args.content)
@@ -67,9 +66,7 @@ impl Tool for EditPromptTool {
         let template_length = args.content.len();
         let parameter_count = template.metadata.parameters.len();
 
-        let mut contents = Vec::new();
-
-        // 1. TERMINAL SUMMARY (ANSI formatted)
+        // Terminal summary
         let summary = format!(
             "\x1b[33m󰆐 Prompt Updated: {}\x1b[0m\n\
              󰢬 Template length: {} · Parameters: {}",
@@ -77,20 +74,15 @@ impl Tool for EditPromptTool {
             template_length,
             parameter_count
         );
-        contents.push(Content::text(summary));
 
-        // 2. JSON METADATA
-        let metadata = json!({
-            "success": true,
-            "name": args.name,
-            "template_length": template_length,
-            "parameter_count": parameter_count
-        });
-        let json_str = serde_json::to_string_pretty(&metadata)
-            .map_err(|e| McpError::Other(e.into()))?;
-        contents.push(Content::text(json_str));
+        let output = PromptEditOutput {
+            success: true,
+            name: args.name.clone(),
+            message: format!("Prompt '{}' updated successfully ({} bytes, {} parameters)", args.name, template_length, parameter_count),
+            path: None,
+        };
 
-        Ok(contents)
+        Ok(ToolResponse::new(summary, output))
     }
 
     fn prompt_arguments() -> Vec<PromptArgument> {
