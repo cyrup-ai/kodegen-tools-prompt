@@ -414,13 +414,13 @@ fn validate_parameter_type(
     param_def: &super::metadata::ParameterDefinition,
     value: &TemplateParamValue,
 ) -> Result<()> {
-    let valid = match (&param_def.param_type, value) {
-        (ParameterType::String, TemplateParamValue::String(_)) => true,
-        (ParameterType::Number, TemplateParamValue::Number(_)) => true,
-        (ParameterType::Boolean, TemplateParamValue::Bool(_)) => true,
-        (ParameterType::Array, TemplateParamValue::StringArray(_)) => true,
-        _ => false,
-    };
+    let valid = matches!(
+        (&param_def.param_type, value),
+        (ParameterType::String, TemplateParamValue::String(_))
+            | (ParameterType::Number, TemplateParamValue::Number(_))
+            | (ParameterType::Boolean, TemplateParamValue::Bool(_))
+            | (ParameterType::Array, TemplateParamValue::StringArray(_))
+    );
 
     if !valid {
         let actual_type = match value {
