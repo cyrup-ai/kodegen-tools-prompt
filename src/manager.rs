@@ -4,7 +4,7 @@ use super::template::{parse_template, render_template};
 use anyhow::{Context, Result};
 use kodegen_config::KodegenConfig;
 use kodegen_mcp_schema::prompt::TemplateParamValue;
-use kodegen_mcp_tool::error::McpError;
+use kodegen_mcp_schema::McpError;
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::io::ErrorKind;

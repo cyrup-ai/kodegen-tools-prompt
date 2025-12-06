@@ -1,8 +1,6 @@
 use super::manager::PromptManager;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolResponse};
-use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{DeletePromptArgs, DeletePromptPromptArgs, PromptDeleteOutput, PROMPT_DELETE};
-use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
+use kodegen_mcp_schema::{McpError, Tool, ToolExecutionContext, ToolResponse};
+use kodegen_mcp_schema::prompt::{DeletePromptArgs, PromptDeleteOutput, PromptDeletePrompts, PROMPT_DELETE};
 
 #[derive(Clone)]
 pub struct DeletePromptTool {
@@ -25,7 +23,7 @@ impl DeletePromptTool {
 
 impl Tool for DeletePromptTool {
     type Args = DeletePromptArgs;
-    type PromptArgs = DeletePromptPromptArgs;
+    type Prompts = PromptDeletePrompts;
 
     fn name() -> &'static str {
         PROMPT_DELETE
@@ -48,7 +46,7 @@ impl Tool for DeletePromptTool {
         false // Second deletion will fail (file gone)
     }
 
-    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as kodegen_mcp_tool::ToolArgs>::Output>, McpError> {
+    async fn execute(&self, args: Self::Args, _ctx: ToolExecutionContext) -> Result<ToolResponse<<Self::Args as kodegen_mcp_schema::ToolArgs>::Output>, McpError> {
         if !args.confirm {
             return Err(McpError::InvalidArguments(
                 "Must set confirm=true to delete a prompt".into(),
@@ -75,38 +73,5 @@ impl Tool for DeletePromptTool {
         };
 
         Ok(ToolResponse::new(summary, output))
-    }
-
-    fn prompt_arguments() -> Vec<PromptArgument> {
-        vec![]
-    }
-
-    async fn prompt(&self, _args: Self::PromptArgs) -> Result<Vec<PromptMessage>, McpError> {
-        Ok(vec![
-            PromptMessage {
-                role: PromptMessageRole::User,
-                content: PromptMessageContent::text("How do I delete a prompt?"),
-            },
-            PromptMessage {
-                role: PromptMessageRole::Assistant,
-                content: PromptMessageContent::text(
-                    "Use prompt_delete to remove a prompt template:\n\n\
-                     Example:\n\
-                     ```\n\
-                     prompt_delete({\n\
-                       \"name\": \"my_prompt\",\n\
-                       \"confirm\": true\n\
-                     })\n\
-                     ```\n\n\
-                     IMPORTANT:\n\
-                     - You must set confirm=true for safety\n\
-                     - This action is permanent and cannot be undone\n\
-                     - Default prompts will be recreated on next initialization if deleted\n\n\
-                     The deletion will fail if:\n\
-                     - confirm is not true\n\
-                     - The prompt does not exist",
-                ),
-            },
-        ])
     }
 }

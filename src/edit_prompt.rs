@@ -1,9 +1,7 @@
 use super::manager::PromptManager;
 use super::template::parse_template;
-use kodegen_mcp_tool::{Tool, ToolExecutionContext, ToolArgs, ToolResponse};
-use kodegen_mcp_tool::error::McpError;
-use kodegen_mcp_schema::prompt::{EditPromptArgs, EditPromptPromptArgs, PromptEditOutput, PROMPT_EDIT};
-use rmcp::model::{PromptArgument, PromptMessage, PromptMessageContent, PromptMessageRole};
+use kodegen_mcp_schema::{McpError, Tool, ToolExecutionContext, ToolArgs, ToolResponse};
+use kodegen_mcp_schema::prompt::{EditPromptArgs, PromptEditOutput, PromptEditPrompts, PROMPT_EDIT};
 
 #[derive(Clone)]
 pub struct EditPromptTool {
@@ -26,7 +24,7 @@ impl EditPromptTool {
 
 impl Tool for EditPromptTool {
     type Args = EditPromptArgs;
-    type PromptArgs = EditPromptPromptArgs;
+    type Prompts = PromptEditPrompts;
 
     fn name() -> &'static str {
         PROMPT_EDIT
@@ -83,78 +81,5 @@ impl Tool for EditPromptTool {
         };
 
         Ok(ToolResponse::new(summary, output))
-    }
-
-    fn prompt_arguments() -> Vec<PromptArgument> {
-        vec![
-            PromptArgument {
-                name: "focus_area".to_string(),
-                title: None,
-                description: Some(
-                    "Which aspect of edit_prompt to focus on: \
-                     'syntax' (Jinja2 template syntax), \
-                     'validation' (validation process and errors), \
-                     'examples' (real-world template examples), \
-                     'best_practices' (tips and gotchas)"
-                        .to_string(),
-                ),
-                required: Some(false),
-            },
-            PromptArgument {
-                name: "template_complexity".to_string(),
-                title: None,
-                description: Some(
-                    "Complexity level of template examples: 'simple' for basic templates, \
-                     'advanced' for complex templates with many parameters"
-                        .to_string(),
-                ),
-                required: Some(false),
-            },
-            PromptArgument {
-                name: "include_common_mistakes".to_string(),
-                title: None,
-                description: Some(
-                    "Include examples of common mistakes and how to avoid them when editing prompts"
-                        .to_string(),
-                ),
-                required: Some(false),
-            },
-        ]
-    }
-
-    async fn prompt(&self, _args: Self::PromptArgs) -> Result<Vec<PromptMessage>, McpError> {
-        Ok(vec![
-            PromptMessage {
-                role: PromptMessageRole::User,
-                content: PromptMessageContent::text("How do I edit an existing prompt?"),
-            },
-            PromptMessage {
-                role: PromptMessageRole::Assistant,
-                content: PromptMessageContent::text(
-                    "Use prompt_edit to update an existing prompt template:\n\n\
-                     1. First, get the current content:\n\
-                     ```\n\
-                     prompt_get({\"action\": \"get\", \"name\": \"my_prompt\"})\n\
-                     ```\n\n\
-                     2. Then edit it:\n\
-                     ```\n\
-                     prompt_edit({\n\
-                       \"name\": \"my_prompt\",\n\
-                       \"content\": \"---\\n\
-                     title: \\\"Updated Title\\\"\\n\
-                     description: \\\"Updated description\\\"\\n\
-                     categories: [\\\"custom\\\"]\\n\
-                     author: \\\"your-name\\\"\\n\
-                     ---\\n\
-                     \\n\
-                     Updated template content here\\n\
-                     \\\"\n\
-                     })\n\
-                     ```\n\n\
-                     The new content completely replaces the old content. \
-                     Template syntax is validated before saving.",
-                ),
-            },
-        ])
     }
 }
