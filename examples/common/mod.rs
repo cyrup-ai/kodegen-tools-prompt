@@ -16,12 +16,12 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 
 /// Browser HTTP server configuration
-const HTTP_PORT: u16 = kodegen_config::PORT_PROMPT;
+const HTTP_PORT: u16 = kodegen_config::PORT_PROMPT - 10000;
 const BINARY_NAME: &str = "kodegen-prompt";
 const PACKAGE_NAME: &str = "kodegen_tools_prompt";
 
 /// HTTP server URL for browser examples
-const HTTP_URL: &str = const_format::formatcp!("http://127.0.0.1:{}/mcp", kodegen_config::PORT_PROMPT);
+const HTTP_URL: &str = const_format::formatcp!("http://127.0.0.1:{}/mcp", kodegen_config::PORT_PROMPT - 10000);
 
 /// Cached workspace root
 static WORKSPACE_ROOT: OnceLock<PathBuf> = OnceLock::new();
